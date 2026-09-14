@@ -20,10 +20,10 @@
 - Dùng chuột bôi đen đoạn văn bản đó.
 - Nhấn tổ hợp phím tắt:
 
-      Ctrl + Shift + T   --> Dịch sang ngôn ngữ mặc định (Tiếng Anh)
-      Ctrl + Shift + E   --> Dịch nhanh sang Tiếng Anh
-      Ctrl + Shift + C   --> Dịch nhanh sang Tiếng Trung
-      Ctrl + Shift + J   --> Dịch nhanh sang Tiếng Nhật
+      Ctrl + Alt + T     --> Dịch sang ngôn ngữ mặc định (Tiếng Anh)
+      Ctrl + Alt + E     --> Dịch nhanh sang Tiếng Anh
+      Ctrl + Alt + C     --> Dịch nhanh sang Tiếng Trung
+      Ctrl + Alt + J     --> Dịch nhanh sang Tiếng Nhật
 
 - Ứng dụng sẽ tự động dịch và thay thế văn bản cũ bằng kết quả dịch!
 - Clipboard ban đầu của bạn sẽ được tự động giữ nguyên vẹn.

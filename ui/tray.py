@@ -12,6 +12,7 @@ from PySide6.QtGui import QAction, QActionGroup, QFont
 from PySide6.QtCore import Qt
 
 from config import get_config, SUPPORTED_LANGUAGES, PROVIDERS
+from core.hotkey_manager import HotkeyManager
 from ui.resources import create_tray_icon
 from ui.settings_window import SettingsWindow
 from ui.history_window import HistoryWindow
@@ -43,8 +44,14 @@ class TrayManager:
         self.tray_icon.setIcon(create_tray_icon(32))
         self.tray_icon.setToolTip("AI Translator (Gboard cho Windows)")
 
+        self.act_translate_selected = None
         self._create_menu()
         self.tray_icon.activated.connect(self._on_tray_activated)
+
+    def _primary_hotkey_label(self) -> str:
+        """Returns the main translate shortcut as the user would read it."""
+        combo = self.config.get_hotkeys().get("translate", {}).get("key", "")
+        return HotkeyManager.format_combo(combo) if combo else "phím tắt đã cấu hình"
 
     def _create_menu(self) -> None:
         self.menu = QMenu()
@@ -59,8 +66,11 @@ class TrayManager:
         self.menu.addSeparator()
 
         # Action: Translate Selected Text
-        act_sel = self.menu.addAction("Dịch văn bản đang chọn (Ctrl+Shift+T)")
+        act_sel = self.menu.addAction(
+            f"Dịch văn bản đang chọn ({self._primary_hotkey_label()})"
+        )
         act_sel.triggered.connect(self.on_translate_selected)
+        self.act_translate_selected = act_sel
 
         # Action: Translate Clipboard
         act_clip = self.menu.addAction("Dịch nội dung Clipboard")
@@ -163,6 +173,12 @@ class TrayManager:
                 act.setChecked(True)
                 break
 
+        # The menu spells out the shortcut, so it has to follow a hotkey change
+        if self.act_translate_selected is not None:
+            self.act_translate_selected.setText(
+                f"Dịch văn bản đang chọn ({self._primary_hotkey_label()})"
+            )
+
         self.on_reload_hotkeys()
 
     def open_history(self) -> None:
@@ -183,7 +199,7 @@ class TrayManager:
             "<p>Công cụ dịch thuật tại chỗ tiện lợi tương tự <b>Gboard Dịch</b> trên điện thoại.</p>"
             "<p><b>Tính năng nổi bật:</b></p>"
             "<ul>"
-            "<li>Bôi đen văn bản trong bất kỳ ứng dụng nào và bấm <code>Ctrl + Shift + T</code></li>"
+            f"<li>Bôi đen văn bản trong bất kỳ ứng dụng nào và bấm <code>{self._primary_hotkey_label()}</code></li>"
             "<li>Tự động dịch và thay thế văn bản trực tiếp tại chỗ</li>"
             "<li>Bảo toàn nguyên vẹn nội dung Clipboard trước đó của bạn</li>"
             "<li>Hỗ trợ nhiều nguồn dịch (Google Translate miễn phí, Gemini, OpenAI)</li>"

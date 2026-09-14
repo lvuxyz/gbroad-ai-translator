@@ -2,7 +2,7 @@
 
 Ứng dụng Windows chạy nền, cung cấp trải nghiệm dịch thuật tức thì tương tự tính năng **Translate của Gboard**:
 * Gõ nội dung bằng Tiếng Việt (hoặc bất kỳ ngôn ngữ nào) trong bất kỳ ứng dụng nào: **Chrome, Edge, Discord, Zalo, Telegram, Messenger, Word, Notepad, VS Code, Slack, Skype...**
-* Bôi đen văn bản và nhấn phím tắt toàn hệ thống (mặc định `Ctrl + Shift + T`).
+* Bôi đen văn bản và nhấn phím tắt toàn hệ thống (mặc định `Ctrl + Alt + T`).
 * Ứng dụng tự động đọc văn bản, dịch sang ngôn ngữ đích thông qua AI (Google Gemini, OpenAI GPT-4o-mini, hoặc Google Translate đa tầng).
 * Tự động thay thế nội dung cũ bằng nội dung đã dịch ngay tại vị trí con trỏ chuột.
 * Tự động khôi phục nội dung clipboard ban đầu của người dùng.
@@ -50,7 +50,7 @@ Các thư viện chính bao gồm:
 * `PySide6`: Giao diện đồ họa hiện đại và biểu tượng Khay hệ thống.
 * `keyring`: Tích hợp Windows Credential Manager để mã hóa lưu trữ API Keys.
 * `pywin32`: Thao tác trực tiếp với Windows Clipboard đa định dạng.
-* `pynput`: Bắt và điều phối phím tắt toàn hệ thống (Global Hotkeys).
+* `ctypes` (Win32 `RegisterHotKey`): Đăng ký phím tắt toàn hệ thống. Hệ điều hành giữ lại tổ hợp nên ứng dụng đang chạy phía trước không nhận được nó.
 * `httpx`: Thực hiện các cuộc gọi REST API bất đồng bộ với timeout và retry.
 * `python-dotenv`: Đọc cấu hình từ file môi trường `.env`.
 
@@ -99,7 +99,7 @@ python main.py
 3. Bôi đen đoạn văn bản vừa nhập.
 4. Nhấn tổ hợp phím tắt:
    ```text
-   Ctrl + Shift + T
+   Ctrl + Alt + T
    ```
 5. Ứng dụng hiển thị thông báo nổi `"Translating..."`, gọi AI dịch thuật, tự động xóa text cũ và thay thế bằng:
    > "I'm learning programming and want to improve my English."
@@ -113,10 +113,10 @@ Mặc định ứng dụng cung cấp các phím tắt toàn hệ thống sau:
 
 | Phím tắt | Chức năng | Ngôn ngữ đích |
 |---|---|---|
-| `Ctrl + Shift + T` | Dịch văn bản đang chọn | Theo ngôn ngữ đã chọn trong Settings |
-| `Ctrl + Shift + E` | Dịch nhanh sang Tiếng Anh | English (`en`) |
-| `Ctrl + Shift + C` | Dịch nhanh sang Tiếng Trung | Chinese Simplified (`zh-CN`) |
-| `Ctrl + Shift + J` | Dịch nhanh sang Tiếng Nhật | Japanese (`ja`) |
+| `Ctrl + Alt + T` | Dịch văn bản đang chọn | Theo ngôn ngữ đã chọn trong Settings |
+| `Ctrl + Alt + E` | Dịch nhanh sang Tiếng Anh | English (`en`) |
+| `Ctrl + Alt + C` | Dịch nhanh sang Tiếng Trung | Chinese Simplified (`zh-CN`) |
+| `Ctrl + Alt + J` | Dịch nhanh sang Tiếng Nhật | Japanese (`ja`) |
 
 Bạn có thể bật/tắt hoặc thay đổi các phím tắt này bất kỳ lúc nào trong **Settings -> Hotkeys**. Thay đổi sẽ có hiệu lực ngay lập tức mà không cần khởi động lại ứng dụng.
 
@@ -125,7 +125,7 @@ Bạn có thể bật/tắt hoặc thay đổi các phím tắt này bất kỳ 
 ## 6. Các chế độ dịch
 
 ### Mode 1 — Translate Selected Text (Mặc định)
-Bôi đen văn bản -> Nhấn `Ctrl + Shift + T` -> Thay thế trực tiếp tại chỗ.
+Bôi đen văn bản -> Nhấn `Ctrl + Alt + T` -> Thay thế trực tiếp tại chỗ.
 
 ### Mode 2 — Clipboard Translation (Dịch nội dung Clipboard)
 Nếu người dùng nhấn phím tắt khi **không có văn bản nào được chọn**:
@@ -209,11 +209,12 @@ gbroad/
 ├── core/
 │   ├── translator.py           # Điều phối provider, retry exponential backoff, timeout 15s
 │   ├── clipboard_manager.py    # Sao lưu đa định dạng (Unicode, DIB, HDROP) & giả lập Win32
-│   ├── hotkey_manager.py       # Lắng nghe phím tắt toàn hệ thống qua pynput
+│   ├── hotkey_manager.py       # Phím tắt toàn hệ thống qua Win32 RegisterHotKey
 │   └── text_processor.py       # Bảo toàn khoảng trắng, nhận diện code block & định dạng
 │
 ├── providers/
 │   ├── base.py                 # TranslationProvider Interface & Exception classes
+│   ├── http.py                 # httpx.Client dùng chung, giữ kết nối sống giữa các lần dịch
 │   ├── google.py               # Google Translate đa tầng (v2 API, Single, Mobile, MyMemory)
 │   ├── gemini.py               # Google Gemini generateContent REST API
 │   └── openai.py               # OpenAI chat/completions REST API
@@ -242,8 +243,10 @@ gbroad/
 ### Các giải pháp giải quyết rủi ro kỹ thuật trên Windows:
 1. **Tránh xung đột phím bổ trợ (Modifier Key Interference)**:
    Khi người dùng bấm `Ctrl + Shift + T`, họ có thể vẫn đang giữ phím vật lý `Shift`. Nếu ứng dụng phát lệnh `Ctrl + C` ngay lập tức, Windows sẽ nhận thành `Ctrl + Shift + C` (làm mở DevTools trên trình duyệt hoặc không hoạt động trên Discord). Ứng dụng giải quyết triệt để bằng cách dùng `ClipboardManager.release_modifier_keys()` để phát sự kiện nhả `Shift/Ctrl/Alt` trước khi gửi phím tắt giả lập.
-2. **Bảo toàn định dạng Clipboard**:
+2. **Phím tắt không lọt xuống ứng dụng đích (Hotkey Suppression)**:
+   Một trình lắng nghe bàn phím chỉ *quan sát* phím mà không tiêu thụ nó, nên ứng dụng đang chạy phía trước vẫn nhận được tổ hợp: bấm `Ctrl + Shift + T` trong Chrome vừa dịch vừa mở lại tab vừa đóng. Ứng dụng dùng Win32 `RegisterHotKey` — hệ điều hành giữ lại tổ hợp và không chuyển tiếp cho ứng dụng nào khác. Mặc định cũng chuyển sang nhóm `Ctrl + Alt` để tránh các lệnh phổ biến của trình duyệt và IDE.
+3. **Bảo toàn định dạng Clipboard**:
    Sử dụng Win32 API `EnumClipboardFormats` để sao lưu toàn bộ dữ liệu nhị phân của các định dạng đang có trước khi thực hiện thao tác thay thế, và phục hồi lại sau khi ứng dụng đích hoàn tất việc paste.
-3. **Giới hạn đã biết**:
+4. **Giới hạn đã biết**:
    * Một số ứng dụng có quyền quản trị cao hơn (Administrator / UAC Elevated) có thể chặn phím tắt gửi từ một tiến trình không có quyền Admin do cơ chế UIPI (User Interface Privilege Isolation) của Windows. Để khắc phục triệt để trên các ứng dụng này, hãy chạy `AITranslator.exe` với quyền **Run as Administrator**.
    * Các ứng dụng đặc thù sử dụng canvas vẽ giao diện riêng hoặc game toàn màn hình không có cơ chế copy bôi đen chuẩn Windows clipboard sẽ tự động kích hoạt **Mode 2 (Dịch clipboard)** thay vì Mode 1.

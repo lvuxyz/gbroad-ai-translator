@@ -15,6 +15,7 @@ from PySide6.QtGui import QFont
 
 from config import (
     get_config,
+    DEFAULT_CONFIG,
     SUPPORTED_LANGUAGES,
     PROVIDERS,
     REWRITE_STYLES,
@@ -185,7 +186,10 @@ class SettingsWindow(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        info_lbl = QLabel("Tùy chỉnh phím tắt toàn hệ thống (định dạng: <ctrl>+<shift>+t):")
+        info_lbl = QLabel(
+            "Tùy chỉnh phím tắt toàn hệ thống (định dạng: <ctrl>+<alt>+t). "
+            "Mỗi phím tắt cần ít nhất một phím bổ trợ."
+        )
         info_lbl.setStyleSheet("color: #64748B; font-size: 11px;")
         layout.addWidget(info_lbl)
 
@@ -328,19 +332,19 @@ class SettingsWindow(QDialog):
         # Hotkeys
         hotkeys = self.config.get_hotkeys()
         hk_trans = hotkeys.get("translate", {})
-        self.edit_hk_translate.setText(hk_trans.get("key", "<ctrl>+<shift>+t"))
+        self.edit_hk_translate.setText(hk_trans.get("key", DEFAULT_CONFIG["hotkeys"]["translate"]["key"]))
         self.chk_hk_translate.setChecked(hk_trans.get("enabled", True))
 
         hk_en = hotkeys.get("translate_en", {})
-        self.edit_hk_en.setText(hk_en.get("key", "<ctrl>+<shift>+e"))
+        self.edit_hk_en.setText(hk_en.get("key", DEFAULT_CONFIG["hotkeys"]["translate_en"]["key"]))
         self.chk_hk_en.setChecked(hk_en.get("enabled", True))
 
         hk_zh = hotkeys.get("translate_zh", {})
-        self.edit_hk_zh.setText(hk_zh.get("key", "<ctrl>+<shift>+c"))
+        self.edit_hk_zh.setText(hk_zh.get("key", DEFAULT_CONFIG["hotkeys"]["translate_zh"]["key"]))
         self.chk_hk_zh.setChecked(hk_zh.get("enabled", True))
 
         hk_ja = hotkeys.get("translate_ja", {})
-        self.edit_hk_ja.setText(hk_ja.get("key", "<ctrl>+<shift>+j"))
+        self.edit_hk_ja.setText(hk_ja.get("key", DEFAULT_CONFIG["hotkeys"]["translate_ja"]["key"]))
         self.chk_hk_ja.setChecked(hk_ja.get("enabled", True))
 
         # API Keys

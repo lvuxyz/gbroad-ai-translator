@@ -1,7 +1,36 @@
-"""Unit tests for Windows clipboard backup and restore operations."""
+"""Unit tests for Windows clipboard backup, restore, and key injection."""
 
+import ctypes
 import unittest
-from core.clipboard_manager import ClipboardManager
+from core.clipboard_manager import (
+    ClipboardManager,
+    INPUT,
+    KEYBDINPUT,
+    MOUSEINPUT,
+    VK_SHIFT,
+)
+
+
+class TestInputStructLayout(unittest.TestCase):
+    """SendInput validates cbSize against its own struct and gives no other
+    hint when the layout is wrong: it just returns 0 and nothing is typed."""
+
+    def test_input_struct_matches_win32_layout(self):
+        pointer_size = ctypes.sizeof(ctypes.c_void_p)
+        expected = 40 if pointer_size == 8 else 28
+        self.assertEqual(
+            ctypes.sizeof(INPUT), expected,
+            f"sizeof(INPUT) must be {expected} on this architecture, "
+            f"or SendInput rejects every event with ERROR_INVALID_PARAMETER"
+        )
+
+    def test_union_is_sized_by_its_largest_member(self):
+        """Dropping MOUSEINPUT from the union is what shrank INPUT before."""
+        self.assertGreaterEqual(ctypes.sizeof(MOUSEINPUT), ctypes.sizeof(KEYBDINPUT))
+
+    def test_send_key_event_is_accepted_by_windows(self):
+        """A rejected event returns False rather than failing silently."""
+        self.assertTrue(ClipboardManager._send_key_event(VK_SHIFT, key_up=True))
 
 
 class TestClipboardManager(unittest.TestCase):
