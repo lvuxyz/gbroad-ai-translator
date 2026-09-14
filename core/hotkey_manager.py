@@ -81,12 +81,12 @@ for _fn in range(1, 25):
 class HotkeyManager:
     """Manages system-wide global hotkeys and action dispatching."""
 
-    def __init__(self, action_callback: Optional[Callable[[Optional[str]], None]] = None):
+    def __init__(self, action_callback: Optional[Callable[[Optional[str], str], None]] = None):
         """Args:
 
-        action_callback: Function called when a translation hotkey triggers.
-        Receives optional target_language code override (e.g. 'en', 'zh-CN',
-        'ja', or None for default).
+        action_callback: Called when a hotkey fires, with the target language
+        override (e.g. 'en', 'zh-CN', 'ja', or None for the configured default)
+        and the action name ('translate' or 'ocr').
         """
         self.config = get_config()
         self.action_callback = action_callback
@@ -102,8 +102,8 @@ class HotkeyManager:
         self.stop()
         self.failed_hotkeys = []
 
-        # hotkey_id -> (modifiers, vk_code, target_language, display_name)
-        bindings: Dict[int, Tuple[int, int, Optional[str], str]] = {}
+        # hotkey_id -> (modifiers, vk_code, target_language, action, display_name)
+        bindings: Dict[int, Tuple[int, int, Optional[str], str, str]] = {}
         next_id = 1
 
         for name, info in self.config.get_hotkeys().items():
@@ -121,7 +121,9 @@ class HotkeyManager:
                 continue
 
             modifiers, vk_code = parsed
-            bindings[next_id] = (modifiers, vk_code, info.get("target"), key_combo)
+            bindings[next_id] = (
+                modifiers, vk_code, info.get("target"), info.get("action", "translate"), key_combo
+            )
             next_id += 1
 
         if not bindings:
@@ -170,18 +172,18 @@ class HotkeyManager:
         logger.info("Reloading hotkeys configuration")
         return self.start()
 
-    def _message_loop(self, bindings: Dict[int, Tuple[int, int, Optional[str], str]]) -> None:
+    def _message_loop(self, bindings: Dict[int, Tuple[int, int, Optional[str], str, str]]) -> None:
         """Registers every hotkey, then pumps WM_HOTKEY until asked to quit."""
         self._thread_id = kernel32.GetCurrentThreadId()
-        registered: Dict[int, Optional[str]] = {}
+        registered: Dict[int, Tuple[Optional[str], str]] = {}
 
         try:
-            for hotkey_id, (modifiers, vk_code, target, display) in bindings.items():
+            for hotkey_id, (modifiers, vk_code, target, action, display) in bindings.items():
                 if user32.RegisterHotKey(None, hotkey_id, modifiers, vk_code):
-                    registered[hotkey_id] = target
+                    registered[hotkey_id] = (target, action)
                     logger.info(
-                        "Registered hotkey '%s' (mod=0x%04X vk=0x%02X) -> target: %s",
-                        display, modifiers, vk_code, target or "default"
+                        "Registered hotkey '%s' (mod=0x%04X vk=0x%02X) -> %s, target: %s",
+                        display, modifiers, vk_code, action, target or "default"
                     )
                 else:
                     err = ctypes.get_last_error()
@@ -212,17 +214,19 @@ class HotkeyManager:
                 if result in (0, -1):  # WM_QUIT, or an error we cannot recover from
                     break
                 if msg.message == WM_HOTKEY:
-                    self._on_hotkey_triggered(registered.get(int(msg.wParam)))
+                    binding = registered.get(int(msg.wParam))
+                    if binding is not None:
+                        self._on_hotkey_triggered(*binding)
         finally:
             for hotkey_id in registered:
                 user32.UnregisterHotKey(None, hotkey_id)
 
-    def _on_hotkey_triggered(self, target_language: Optional[str]) -> None:
+    def _on_hotkey_triggered(self, target_language: Optional[str], action: str = "translate") -> None:
         """Dispatches hotkey trigger to application callback."""
-        logger.info("Global hotkey triggered (target override: %s)", target_language)
+        logger.info("Global hotkey triggered (action=%s, target=%s)", action, target_language)
         if self.action_callback:
             try:
-                self.action_callback(target_language)
+                self.action_callback(target_language, action)
             except Exception as e:
                 # Never let a callback failure kill the message pump
                 logger.error("Error executing hotkey action callback: %s", e)

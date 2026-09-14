@@ -19,6 +19,7 @@ from providers.google import GoogleTranslateProvider
 from providers.gemini import GeminiProvider
 from providers.openai import OpenAIProvider
 from core.text_processor import TextProcessor
+from core import glossary as glossary_module
 from config import get_config
 from database import get_database
 from utils.logger import get_logger
@@ -145,9 +146,16 @@ class TranslatorService:
         rewrite_style = style or self.config.get("rewrite_style", "natural")
         active_provider_name = (provider_name or self.config.get("provider", "gemini")).lower()
 
+        # Mask protected terms before the text leaves the machine
+        entries = glossary_module.build_entries(self.config.get_glossary())
+        masked_body, restorations = glossary_module.protect(body, entries)
+
         # Privacy Mode keeps nothing about the text around, cache included
         privacy_mode = self.config.get("privacy_mode", False)
-        cache_key = (body, src_lang, tgt_lang, active_provider_name, trans_mode, rewrite_style)
+        cache_key = (
+            masked_body, src_lang, tgt_lang, active_provider_name, trans_mode, rewrite_style,
+            tuple(sorted(restorations.items())),
+        )
 
         if not privacy_mode:
             cached = self.cache.get(cache_key)
@@ -168,14 +176,15 @@ class TranslatorService:
         for attempt in range(max_retries + 1):
             try:
                 raw_result = provider.translate(
-                    text=body,
+                    text=masked_body,
                     source_language=src_lang,
                     target_language=tgt_lang,
                     mode=trans_mode,
                     style=rewrite_style
                 )
 
-                cleaned_result = self.text_processor.clean_output(body, raw_result)
+                cleaned_result = self.text_processor.clean_output(masked_body, raw_result)
+                cleaned_result = glossary_module.restore(cleaned_result, restorations)
                 final_result = self.text_processor.apply_spacing(cleaned_result, leading, trailing)
 
                 if not privacy_mode:
