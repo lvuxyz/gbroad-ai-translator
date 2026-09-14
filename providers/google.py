@@ -11,6 +11,7 @@ import html
 import re
 from typing import Optional
 import httpx
+from core.language_detect import detect_language
 from providers.http import get_client
 from providers.base import (
     TranslationProvider,
@@ -166,10 +167,41 @@ class GoogleTranslateProvider(TranslationProvider):
         except httpx.TimeoutException as e:
             raise NetworkError("Google Translate request timed out after 15 seconds.") from e
 
+    # MyMemory puts these in the translation field rather than raising an error
+    MYMEMORY_ERROR_MARKERS = (
+        "PLEASE SELECT TWO DISTINCT LANGUAGES",
+        "INVALID LANGUAGE PAIR",
+        "QUERY LENGTH LIMIT EXCEEDED",
+        "YOU USED ALL AVAILABLE FREE TRANSLATIONS",
+        "MYMEMORY WARNING",
+    )
+
     def _translate_mymemory(self, text: str, src: str, tgt: str) -> str:
-        """MyMemory public translation fallback."""
+        """MyMemory public translation fallback.
+
+        MyMemory has no auto-detect, so it needs a concrete source language.
+        That source is resolved locally rather than assumed: hardcoding one
+        breaks precisely when the user translates *into* that same language,
+        and the service then answers with an error string in the translation
+        field instead of an error status.
+        """
         url = "https://api.mymemory.translated.net/get"
-        src_clean = "vi" if src == "auto" else src
+
+        src_clean = src
+        if src_clean in ("auto", ""):
+            src_clean = detect_language(text) or ""
+
+        if not src_clean:
+            raise TranslationError(
+                "Không xác định được ngôn ngữ nguồn cho bộ dịch dự phòng."
+            )
+
+        if src_clean.split("-")[0].lower() == tgt.split("-")[0].lower():
+            # Same language in and out: the pair would be rejected, and there is
+            # nothing to translate anyway.
+            logger.info("Source and target are both '%s'; returning text unchanged", tgt)
+            return text
+
         params = {
             "q": text,
             "langpair": f"{src_clean}|{tgt}"
@@ -180,13 +212,26 @@ class GoogleTranslateProvider(TranslationProvider):
             response = client.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
+
+            status = data.get("responseStatus")
+            if status not in (200, "200", None):
+                detail = data.get("responseDetails") or f"status {status}"
+                raise TranslationError(f"MyMemory từ chối yêu cầu: {detail}")
+
             translated = data.get("responseData", {}).get("translatedText")
-            if translated:
-                return html.unescape(translated).strip()
-            raise TranslationError("MyMemory returned empty translation")
+            if not translated:
+                raise TranslationError("MyMemory returned empty translation")
+
+            upper = translated.strip().upper()
+            if any(marker in upper for marker in self.MYMEMORY_ERROR_MARKERS):
+                raise TranslationError(f"MyMemory error: {translated.strip()}")
+
+            return html.unescape(translated).strip()
         except httpx.ConnectError as e:
             raise NetworkError("Translation unavailable. Please check your internet connection.") from e
         except httpx.TimeoutException as e:
             raise NetworkError("Translation request timed out after 15 seconds.") from e
+        except TranslationError:
+            raise
         except Exception as e:
             raise TranslationError(f"All translation tiers failed: {e}") from e

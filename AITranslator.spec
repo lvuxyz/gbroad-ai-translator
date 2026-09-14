@@ -22,6 +22,13 @@ hidden_imports = [
     'requests',
     'sqlite3',
     'dotenv',
+    # WinRT OCR: PyInstaller cannot see these through the winrt namespace package
+    'winrt.runtime',
+    'winrt.windows.foundation',
+    'winrt.windows.globalization',
+    'winrt.windows.graphics.imaging',
+    'winrt.windows.media.ocr',
+    'winrt.windows.storage.streams',
 ]
 
 a = Analysis(

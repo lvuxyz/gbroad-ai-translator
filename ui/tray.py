@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction, QActionGroup, QFont
 from PySide6.QtCore import Qt
 
-from config import get_config, SUPPORTED_LANGUAGES, PROVIDERS
+from config import get_config, SUPPORTED_LANGUAGES, TARGET_LANGUAGES, PROVIDERS
 from core.hotkey_manager import HotkeyManager
 from ui.resources import create_tray_icon
 from ui.settings_window import SettingsWindow
@@ -29,12 +29,14 @@ class TrayManager:
         app: QApplication,
         on_translate_selected: Callable[[], None],
         on_translate_clipboard: Callable[[], None],
-        on_reload_hotkeys: Callable[[], None]
+        on_reload_hotkeys: Callable[[], None],
+        on_translate_ocr: Optional[Callable[[], None]] = None
     ):
         self.app = app
         self.config = get_config()
         self.on_translate_selected = on_translate_selected
         self.on_translate_clipboard = on_translate_clipboard
+        self.on_translate_ocr = on_translate_ocr
         self.on_reload_hotkeys = on_reload_hotkeys
 
         self.settings_window: Optional[SettingsWindow] = None
@@ -52,6 +54,42 @@ class TrayManager:
         """Returns the main translate shortcut as the user would read it."""
         combo = self.config.get_hotkeys().get("translate", {}).get("key", "")
         return HotkeyManager.format_combo(combo) if combo else "phím tắt đã cấu hình"
+
+    def _hotkey_label(self, name: str) -> str:
+        """Returns a configured shortcut as the user would read it."""
+        combo = self.config.get_hotkeys().get(name, {}).get("key", "")
+        return HotkeyManager.format_combo(combo) if combo else "chưa gán"
+
+    def _build_language_menu(self) -> None:
+        """Fills the target-language menu with recents plus a full list."""
+        self.lang_menu.clear()
+        for action in self.lang_group.actions():
+            self.lang_group.removeAction(action)
+
+        current = self.config.get("target_language", "en")
+        recent = [c for c in self.config.get("recent_languages", []) if c in TARGET_LANGUAGES]
+        if current in TARGET_LANGUAGES and current not in recent:
+            recent.insert(0, current)
+
+        for code in recent:
+            self.lang_menu.addAction(self._make_language_action(code, current, self.lang_menu))
+
+        if recent:
+            self.lang_menu.addSeparator()
+
+        all_menu = self.lang_menu.addMenu("Tất cả ngôn ngữ")
+        for code in TARGET_LANGUAGES:
+            all_menu.addAction(self._make_language_action(code, current, all_menu))
+
+    def _make_language_action(self, code: str, current: str, parent) -> QAction:
+        act = QAction(f"{TARGET_LANGUAGES[code]} ({code})", parent)
+        act.setCheckable(True)
+        act.setData(code)
+        if code == current:
+            act.setChecked(True)
+        act.triggered.connect(lambda checked, c=code: self._set_target_language(c))
+        self.lang_group.addAction(act)
+        return act
 
     def _create_menu(self) -> None:
         self.menu = QMenu()
@@ -76,25 +114,22 @@ class TrayManager:
         act_clip = self.menu.addAction("Dịch nội dung Clipboard")
         act_clip.triggered.connect(self.on_translate_clipboard)
 
+        # Action: Translate a screen region via OCR
+        if self.on_translate_ocr is not None:
+            act_ocr = self.menu.addAction(
+                f"Dịch vùng màn hình — OCR ({self._hotkey_label('translate_ocr')})"
+            )
+            act_ocr.triggered.connect(self.on_translate_ocr)
+
         self.menu.addSeparator()
 
-        # Submenu: Target Language
+        # Submenu: Target Language.
+        # Recently used languages sit at the top; the full list of 56 would be
+        # unusable as a flat menu.
         self.lang_menu = self.menu.addMenu("Ngôn ngữ đích")
         self.lang_group = QActionGroup(self.lang_menu)
         self.lang_group.setExclusive(True)
-
-        current_tgt = self.config.get("target_language", "en")
-        for code, name in SUPPORTED_LANGUAGES.items():
-            if code == "auto":
-                continue
-            act = QAction(f"{name} ({code})", self.lang_menu)
-            act.setCheckable(True)
-            act.setData(code)
-            if code == current_tgt:
-                act.setChecked(True)
-            act.triggered.connect(lambda checked, c=code: self._set_target_language(c))
-            self.lang_group.addAction(act)
-            self.lang_menu.addAction(act)
+        self._build_language_menu()
 
         # Submenu: Provider
         self.prov_menu = self.menu.addMenu("Dịch vụ dịch (Provider)")
@@ -142,6 +177,8 @@ class TrayManager:
 
     def _set_target_language(self, code: str) -> None:
         self.config.set("target_language", code)
+        self.config.remember_language(code)
+        self._build_language_menu()
         logger.info("Target language switched from tray to: %s", code)
 
     def _set_provider(self, provider_id: str) -> None:
@@ -161,11 +198,7 @@ class TrayManager:
 
     def _on_settings_applied(self) -> None:
         """Refreshes tray checkmarks and reloads hotkeys."""
-        current_tgt = self.config.get("target_language", "en")
-        for act in self.lang_group.actions():
-            if act.data() == current_tgt:
-                act.setChecked(True)
-                break
+        self._build_language_menu()
 
         current_prov = self.config.get("provider", "google")
         for act in self.prov_group.actions():

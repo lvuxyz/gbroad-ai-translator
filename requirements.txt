@@ -5,5 +5,13 @@ pyperclip>=1.8.2
 httpx>=0.25.0
 requests>=2.31.0
 python-dotenv>=1.0.0
+
+# Screen-region OCR via the Windows built-in recognizer (runs offline)
+winrt-runtime>=3.2.0
+winrt-Windows.Foundation>=3.2.0
+winrt-Windows.Globalization>=3.2.0
+winrt-Windows.Graphics.Imaging>=3.2.0
+winrt-Windows.Media.Ocr>=3.2.0
+winrt-Windows.Storage.Streams>=3.2.0
 pytest>=7.4.0
 pyinstaller>=6.0.0

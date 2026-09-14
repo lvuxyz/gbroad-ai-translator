@@ -17,19 +17,72 @@ logger = get_logger()
 
 SERVICE_NAME = "AITranslator"
 
-# Supported language codes and their display names
+# Supported language codes and their display names.
+# Vietnamese and English lead the list because they are the pair this tool is
+# built around; the rest follow alphabetically by Vietnamese name.
 SUPPORTED_LANGUAGES: Dict[str, str] = {
     "auto": "Tự động phát hiện",
     "vi": "Tiếng Việt",
     "en": "Tiếng Anh",
+    "ar": "Tiếng Ả Rập",
+    "pl": "Tiếng Ba Lan",
+    "fa": "Tiếng Ba Tư",
+    "bn": "Tiếng Bengal",
+    "pt": "Tiếng Bồ Đào Nha",
+    "bg": "Tiếng Bulgaria",
+    "cs": "Tiếng Séc",
+    "da": "Tiếng Đan Mạch",
+    "de": "Tiếng Đức",
+    "he": "Tiếng Do Thái",
+    "et": "Tiếng Estonia",
+    "nl": "Tiếng Hà Lan",
+    "ko": "Tiếng Hàn",
+    "hi": "Tiếng Hindi",
+    "hu": "Tiếng Hungary",
+    "el": "Tiếng Hy Lạp",
+    "is": "Tiếng Iceland",
+    "id": "Tiếng Indonesia",
+    "km": "Tiếng Khmer",
+    "lo": "Tiếng Lào",
+    "lv": "Tiếng Latvia",
+    "lt": "Tiếng Litva",
+    "ms": "Tiếng Mã Lai",
+    "my": "Tiếng Miến Điện",
+    "no": "Tiếng Na Uy",
+    "ne": "Tiếng Nepal",
+    "ru": "Tiếng Nga",
+    "ja": "Tiếng Nhật",
+    "ro": "Tiếng Romania",
+    "fr": "Tiếng Pháp",
+    "fi": "Tiếng Phần Lan",
+    "sr": "Tiếng Serbia",
+    "si": "Tiếng Sinhala",
+    "sk": "Tiếng Slovakia",
+    "sl": "Tiếng Slovenia",
+    "sw": "Tiếng Swahili",
+    "ta": "Tiếng Tamil",
+    "es": "Tiếng Tây Ban Nha",
+    "te": "Tiếng Telugu",
+    "th": "Tiếng Thái",
+    "tr": "Tiếng Thổ Nhĩ Kỳ",
+    "sv": "Tiếng Thụy Điển",
     "zh-CN": "Tiếng Trung (Giản thể)",
     "zh-TW": "Tiếng Trung (Phồn thể)",
-    "ja": "Tiếng Nhật",
-    "ko": "Tiếng Hàn",
-    "fr": "Tiếng Pháp",
-    "de": "Tiếng Đức",
-    "es": "Tiếng Tây Ban Nha",
-    "th": "Tiếng Thái",
+    "uk": "Tiếng Ukraina",
+    "ur": "Tiếng Urdu",
+    "gu": "Tiếng Gujarat",
+    "kn": "Tiếng Kannada",
+    "ml": "Tiếng Malayalam",
+    "mr": "Tiếng Marathi",
+    "pa": "Tiếng Punjab",
+    "af": "Tiếng Afrikaans",
+    "cy": "Tiếng Wales",
+    "it": "Tiếng Ý",
+}
+
+# Languages offered without the "auto detect" pseudo-entry
+TARGET_LANGUAGES: Dict[str, str] = {
+    code: name for code, name in SUPPORTED_LANGUAGES.items() if code != "auto"
 }
 
 # Supported providers
@@ -89,6 +142,37 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "gemini_model": "gemini-2.5-flash",
     "openai_model": "gpt-4o-mini",
 
+    # Two-way translation: one hotkey sends primary -> secondary and back again,
+    # choosing the direction from the text itself.
+    "auto_swap": {
+        "enabled": True,
+        "primary": "vi",
+        "secondary": "en",
+    },
+
+    # Per-application overrides, keyed by lower-cased executable name.
+    # Any of target_language, mode, rewrite_style and skip_code may be set.
+    "app_profiles": {},
+
+    # Terms that must survive translation unchanged.
+    # Rows: {"term": str, "replacement": str, "match_case": bool, "enabled": bool}
+    "glossary": [],
+
+    # Show the result for confirmation instead of replacing the selection outright
+    "preview_popup": {
+        "enabled": False,
+        "timeout_seconds": 12,
+    },
+
+    # Screen-region OCR translation
+    "ocr": {
+        "enabled": True,
+        "language": "auto",
+    },
+
+    # Most recently used target languages, so the tray menu stays usable
+    "recent_languages": ["en", "vi", "ja"],
+
     # Hotkeys
     "hotkeys": {
         "translate": {
@@ -113,6 +197,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "enabled": True,
             "description": "Dịch nhanh sang Tiếng Nhật",
             "target": "ja"
+        },
+        "translate_ocr": {
+            "key": "<ctrl>+<alt>+o",
+            "enabled": True,
+            "description": "Dịch vùng màn hình (OCR)",
+            "action": "ocr"
         },
     }
 }
@@ -222,6 +312,28 @@ class ConfigManager:
             self._data["hotkeys"][name]["enabled"] = enabled
         else:
             self._data["hotkeys"][name] = {"key": key_combo, "enabled": enabled}
+        self.save()
+
+    # --- Feature helpers ---
+    def get_glossary(self) -> list:
+        """Returns the raw glossary rows."""
+        return self._data.get("glossary", [])
+
+    def get_app_profiles(self) -> Dict[str, Any]:
+        """Returns per-application overrides keyed by executable name."""
+        return self._data.get("app_profiles", {})
+
+    def get_auto_swap(self) -> Dict[str, Any]:
+        """Returns the two-way translation pair settings."""
+        return self._data.get("auto_swap", DEFAULT_CONFIG["auto_swap"])
+
+    def remember_language(self, code: str, limit: int = 6) -> None:
+        """Moves a language to the front of the recently-used list."""
+        if not code or code == "auto":
+            return
+        recent = [c for c in self._data.get("recent_languages", []) if c != code]
+        recent.insert(0, code)
+        self._data["recent_languages"] = recent[:limit]
         self.save()
 
     # --- API Key Management (Windows Credential Manager) ---

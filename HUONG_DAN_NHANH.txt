@@ -24,6 +24,10 @@
       Ctrl + Alt + E     --> Dịch nhanh sang Tiếng Anh
       Ctrl + Alt + C     --> Dịch nhanh sang Tiếng Trung
       Ctrl + Alt + J     --> Dịch nhanh sang Tiếng Nhật
+      Ctrl + Alt + O     --> Kéo chọn vùng màn hình và dịch chữ trong đó (OCR)
+
+- Mặc định ứng dụng tự chọn chiều dịch: gõ tiếng Việt thì ra tiếng Anh,
+  gõ tiếng Anh thì ra tiếng Việt, cùng một phím Ctrl + Alt + T.
 
 - Ứng dụng sẽ tự động dịch và thay thế văn bản cũ bằng kết quả dịch!
 - Clipboard ban đầu của bạn sẽ được tự động giữ nguyên vẹn.

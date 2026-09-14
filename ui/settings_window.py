@@ -8,15 +8,18 @@ from typing import Optional, Callable
 from PySide6.QtWidgets import (
     QDialog, QTabWidget, QWidget, QVBoxLayout, QHBoxLayout,
     QFormLayout, QCheckBox, QComboBox, QLineEdit, QPushButton,
-    QLabel, QGroupBox, QMessageBox, QSpacerItem, QSizePolicy
+    QLabel, QGroupBox, QMessageBox, QSpacerItem, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox, QAbstractItemView
 )
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QCompleter
 from PySide6.QtGui import QFont
 
 from config import (
     get_config,
     DEFAULT_CONFIG,
     SUPPORTED_LANGUAGES,
+    TARGET_LANGUAGES,
     PROVIDERS,
     REWRITE_STYLES,
     DEFAULT_MODELS
@@ -26,6 +29,36 @@ from utils.logger import set_privacy_mode, get_logger
 from ui.resources import create_app_icon
 
 logger = get_logger()
+
+GLOSSARY_HINT = (
+    "Từ khóa giữ nguyên khi dịch: tên thương hiệu, tên sản phẩm, biệt danh, thuật ngữ nội bộ.\n"
+    "Để trống cột Dịch thành nếu muốn giữ nguyên từ gốc; "
+    "điền vào nếu muốn ép một cách dịch cố định."
+)
+
+
+
+def _language_combo(languages: dict) -> QComboBox:
+    """Builds a type-to-filter language picker.
+
+    With 56 languages a plain dropdown means a long scroll, so the combo is
+    editable and completes on the language name as the user types. It stays
+    restricted to the listed languages — the edit box filters, it does not
+    accept arbitrary input.
+    """
+    combo = QComboBox()
+    combo.setEditable(True)
+    combo.setInsertPolicy(QComboBox.NoInsert)
+    combo.setMaxVisibleItems(16)
+    for code, name in languages.items():
+        combo.addItem(f"{name} ({code})", code)
+
+    completer = combo.completer()
+    if completer is not None:
+        completer.setCompletionMode(QCompleter.PopupCompletion)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+    return combo
 
 
 class SettingsWindow(QDialog):
@@ -68,7 +101,17 @@ class SettingsWindow(QDialog):
         self._init_tab_hotkeys()
         self.tab_widget.addTab(self.tab_hotkeys, "Phím tắt")
 
-        # Tab 4: API Keys
+        # Tab 4: Per-application profiles
+        self.tab_profiles = QWidget()
+        self._init_tab_profiles()
+        self.tab_widget.addTab(self.tab_profiles, "Theo ứng dụng")
+
+        # Tab 5: Glossary
+        self.tab_glossary = QWidget()
+        self._init_tab_glossary()
+        self.tab_widget.addTab(self.tab_glossary, "Thuật ngữ")
+
+        # Tab 6: API Keys
         self.tab_keys = QWidget()
         self._init_tab_keys()
         self.tab_widget.addTab(self.tab_keys, "Tài khoản API")
@@ -137,16 +180,11 @@ class SettingsWindow(QDialog):
         form.setSpacing(12)
 
         # Source Language
-        self.combo_src_lang = QComboBox()
-        for code, name in SUPPORTED_LANGUAGES.items():
-            self.combo_src_lang.addItem(f"{name} ({code})", code)
+        self.combo_src_lang = _language_combo(SUPPORTED_LANGUAGES)
         form.addRow("Ngôn ngữ nguồn:", self.combo_src_lang)
 
         # Target Language
-        self.combo_tgt_lang = QComboBox()
-        for code, name in SUPPORTED_LANGUAGES.items():
-            if code != "auto":
-                self.combo_tgt_lang.addItem(f"{name} ({code})", code)
+        self.combo_tgt_lang = _language_combo(TARGET_LANGUAGES)
         form.addRow("Ngôn ngữ đích mặc định:", self.combo_tgt_lang)
 
         # Provider
@@ -179,6 +217,57 @@ class SettingsWindow(QDialog):
         form.addRow("Văn phong viết lại:", self.combo_style)
 
         layout.addLayout(form)
+
+        # Two-way translation
+        grp_auto = QGroupBox("Dịch hai chiều tự động")
+        auto_layout = QVBoxLayout(grp_auto)
+        auto_layout.setSpacing(9)
+
+        self.chk_auto_swap = QCheckBox(
+            "Tự chọn chiều dịch theo nội dung (một phím tắt cho cả hai chiều)"
+        )
+        auto_layout.addWidget(self.chk_auto_swap)
+
+        pair_row = QHBoxLayout()
+        pair_row.setSpacing(8)
+        self.combo_auto_primary = _language_combo(TARGET_LANGUAGES)
+        self.combo_auto_secondary = _language_combo(TARGET_LANGUAGES)
+        pair_row.addWidget(QLabel("Cặp ngôn ngữ:"))
+        pair_row.addWidget(self.combo_auto_primary)
+        pair_row.addWidget(QLabel("⇄"))
+        pair_row.addWidget(self.combo_auto_secondary)
+        pair_row.addStretch()
+        auto_layout.addLayout(pair_row)
+
+        hint_auto = QLabel(
+            "Gõ tiếng Việt thì ra ngôn ngữ còn lại, và ngược lại. "
+            "Phím tắt gán cứng ngôn ngữ (Ctrl+Alt+E/C/J) không bị ảnh hưởng."
+        )
+        hint_auto.setWordWrap(True)
+        hint_auto.setStyleSheet("color: #64748B; font-size: 11px;")
+        auto_layout.addWidget(hint_auto)
+        layout.addWidget(grp_auto)
+
+        # Preview popup
+        grp_preview = QGroupBox("Xem trước kết quả")
+        preview_layout = QVBoxLayout(grp_preview)
+        preview_layout.setSpacing(9)
+
+        self.chk_preview = QCheckBox("Hiện popup xem trước thay vì thay chữ ngay lập tức")
+        preview_layout.addWidget(self.chk_preview)
+
+        timeout_row = QHBoxLayout()
+        timeout_row.addWidget(QLabel("Tự đóng sau:"))
+        self.spin_preview_timeout = QSpinBox()
+        self.spin_preview_timeout.setRange(0, 120)
+        self.spin_preview_timeout.setSuffix(" giây")
+        self.spin_preview_timeout.setSpecialValueText("Không tự đóng")
+        self.spin_preview_timeout.setFixedWidth(140)
+        timeout_row.addWidget(self.spin_preview_timeout)
+        timeout_row.addStretch()
+        preview_layout.addLayout(timeout_row)
+        layout.addWidget(grp_preview)
+
         layout.addStretch()
 
     def _init_tab_hotkeys(self) -> None:
@@ -228,8 +317,151 @@ class SettingsWindow(QDialog):
         hk_ja_box.addWidget(self.chk_hk_ja)
         form.addRow("Dịch nhanh sang Tiếng Nhật:", hk_ja_box)
 
+        # OCR
+        self.edit_hk_ocr = QLineEdit()
+        self.chk_hk_ocr = QCheckBox("Bật")
+        hk_ocr_box = QHBoxLayout()
+        hk_ocr_box.addWidget(self.edit_hk_ocr)
+        hk_ocr_box.addWidget(self.chk_hk_ocr)
+        form.addRow("Dịch vùng màn hình (OCR):", hk_ocr_box)
+
         layout.addLayout(form)
         layout.addStretch()
+
+    def _init_tab_profiles(self) -> None:
+        layout = QVBoxLayout(self.tab_profiles)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        info = QLabel(
+            "Đặt ngôn ngữ và văn phong riêng cho từng ứng dụng. "
+            "Nhập tên file chạy, ví dụ discord.exe, outlook.exe, code.exe.\n"
+            "Ứng dụng không có trong danh sách sẽ dùng cài đặt chung."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #64748B; font-size: 11px;")
+        layout.addWidget(info)
+
+        self.table_profiles = QTableWidget(0, 4, self)
+        self.table_profiles.setHorizontalHeaderLabels(
+            ["Ứng dụng (.exe)", "Ngôn ngữ đích", "Chế độ", "Văn phong"]
+        )
+        self.table_profiles.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table_profiles.verticalHeader().setVisible(False)
+        self.table_profiles.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.table_profiles)
+
+        buttons = QHBoxLayout()
+        btn_add = QPushButton("Thêm ứng dụng")
+        btn_add.clicked.connect(lambda: self._add_profile_row("", "en", "translate", "natural"))
+        buttons.addWidget(btn_add)
+
+        btn_current = QPushButton("Thêm ứng dụng đang mở")
+        btn_current.clicked.connect(self._add_current_app)
+        buttons.addWidget(btn_current)
+
+        btn_remove = QPushButton("Xóa dòng")
+        btn_remove.clicked.connect(lambda: self._remove_selected_rows(self.table_profiles))
+        buttons.addWidget(btn_remove)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+    def _init_tab_glossary(self) -> None:
+        layout = QVBoxLayout(self.tab_glossary)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        info = QLabel(GLOSSARY_HINT)
+        info.setWordWrap(True)
+        info.setStyleSheet("color: #64748B; font-size: 11px;")
+        layout.addWidget(info)
+
+        self.table_glossary = QTableWidget(0, 3, self)
+        self.table_glossary.setHorizontalHeaderLabels(
+            ["Từ gốc", "Dịch thành (để trống = giữ nguyên)", "Phân biệt hoa/thường"]
+        )
+        self.table_glossary.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table_glossary.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table_glossary.verticalHeader().setVisible(False)
+        self.table_glossary.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.table_glossary)
+
+        buttons = QHBoxLayout()
+        btn_add = QPushButton("Thêm thuật ngữ")
+        btn_add.clicked.connect(lambda: self._add_glossary_row("", "", False))
+        buttons.addWidget(btn_add)
+
+        btn_remove = QPushButton("Xóa dòng")
+        btn_remove.clicked.connect(lambda: self._remove_selected_rows(self.table_glossary))
+        buttons.addWidget(btn_remove)
+        buttons.addStretch()
+        layout.addLayout(buttons)
+
+    # --- table row helpers ---
+    def _add_profile_row(self, app_name: str, target: str, mode: str, style: str) -> None:
+        row = self.table_profiles.rowCount()
+        self.table_profiles.insertRow(row)
+        self.table_profiles.setItem(row, 0, QTableWidgetItem(app_name))
+
+        combo_lang = _language_combo(TARGET_LANGUAGES)
+        index = combo_lang.findData(target)
+        if index >= 0:
+            combo_lang.setCurrentIndex(index)
+        self.table_profiles.setCellWidget(row, 1, combo_lang)
+
+        combo_mode = QComboBox()
+        combo_mode.addItem("Dịch thuật", "translate")
+        combo_mode.addItem("Viết lại", "rewrite")
+        idx_mode = combo_mode.findData(mode)
+        if idx_mode >= 0:
+            combo_mode.setCurrentIndex(idx_mode)
+        self.table_profiles.setCellWidget(row, 2, combo_mode)
+
+        combo_style = QComboBox()
+        for st in REWRITE_STYLES:
+            combo_style.addItem(st.capitalize(), st)
+        idx_style = combo_style.findData(style)
+        if idx_style >= 0:
+            combo_style.setCurrentIndex(idx_style)
+        self.table_profiles.setCellWidget(row, 3, combo_style)
+
+    def _add_current_app(self) -> None:
+        """Fills in the application the user last had in front."""
+        from core.app_context import get_foreground_app
+        context = get_foreground_app()
+        name = context.process_name
+        if not name or name.startswith("python"):
+            QMessageBox.information(
+                self, "Không xác định được ứng dụng",
+                "Hãy mở ứng dụng cần cấu hình, rồi quay lại đây và bấm lại nút này."
+            )
+            return
+        self._add_profile_row(
+            name,
+            self.config.get("target_language", "en"),
+            self.config.get("mode", "translate"),
+            self.config.get("rewrite_style", "natural"),
+        )
+
+    def _add_glossary_row(self, term: str, replacement: str, match_case: bool) -> None:
+        row = self.table_glossary.rowCount()
+        self.table_glossary.insertRow(row)
+        self.table_glossary.setItem(row, 0, QTableWidgetItem(term))
+        self.table_glossary.setItem(row, 1, QTableWidgetItem(replacement))
+
+        check = QCheckBox()
+        check.setChecked(match_case)
+        wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.setAlignment(Qt.AlignCenter)
+        wrapper_layout.addWidget(check)
+        self.table_glossary.setCellWidget(row, 2, wrapper)
+
+    @staticmethod
+    def _remove_selected_rows(table: QTableWidget) -> None:
+        for index in sorted({i.row() for i in table.selectedIndexes()}, reverse=True):
+            table.removeRow(index)
 
     def _init_tab_keys(self) -> None:
         layout = QVBoxLayout(self.tab_keys)
@@ -329,6 +561,41 @@ class SettingsWindow(QDialog):
 
         self._on_provider_changed()
 
+        # Two-way translation
+        auto = self.config.get_auto_swap()
+        self.chk_auto_swap.setChecked(bool(auto.get("enabled", False)))
+        for combo, key, default in (
+            (self.combo_auto_primary, "primary", "vi"),
+            (self.combo_auto_secondary, "secondary", "en"),
+        ):
+            idx = combo.findData(auto.get(key, default))
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
+        # Preview popup
+        preview = self.config.get("preview_popup", {})
+        self.chk_preview.setChecked(bool(preview.get("enabled", False)))
+        self.spin_preview_timeout.setValue(int(preview.get("timeout_seconds", 12)))
+
+        # Per-application profiles
+        self.table_profiles.setRowCount(0)
+        for app_name, profile in self.config.get_app_profiles().items():
+            self._add_profile_row(
+                app_name,
+                profile.get("target_language", self.config.get("target_language", "en")),
+                profile.get("mode", "translate"),
+                profile.get("rewrite_style", "natural"),
+            )
+
+        # Glossary
+        self.table_glossary.setRowCount(0)
+        for entry in self.config.get_glossary():
+            self._add_glossary_row(
+                entry.get("term", ""),
+                entry.get("replacement", ""),
+                bool(entry.get("match_case", False)),
+            )
+
         # Hotkeys
         hotkeys = self.config.get_hotkeys()
         hk_trans = hotkeys.get("translate", {})
@@ -346,6 +613,10 @@ class SettingsWindow(QDialog):
         hk_ja = hotkeys.get("translate_ja", {})
         self.edit_hk_ja.setText(hk_ja.get("key", DEFAULT_CONFIG["hotkeys"]["translate_ja"]["key"]))
         self.chk_hk_ja.setChecked(hk_ja.get("enabled", True))
+
+        hk_ocr = hotkeys.get("translate_ocr", {})
+        self.edit_hk_ocr.setText(hk_ocr.get("key", DEFAULT_CONFIG["hotkeys"]["translate_ocr"]["key"]))
+        self.chk_hk_ocr.setChecked(hk_ocr.get("enabled", True))
 
         # API Keys
         key_gemini = self.config.get_api_key("gemini")
@@ -374,6 +645,52 @@ class SettingsWindow(QDialog):
         else:
             self.lbl_status_google.setText("Đang dùng miễn phí (OK)")
             self.lbl_status_google.setStyleSheet("color: #22C55E;")
+
+    def _collect_profiles(self) -> dict:
+        """Reads the per-application table back into config shape."""
+        profiles = {}
+        for row in range(self.table_profiles.rowCount()):
+            name_item = self.table_profiles.item(row, 0)
+            app_name = (name_item.text() if name_item else "").strip().lower()
+            if not app_name:
+                continue
+            if not app_name.endswith(".exe"):
+                app_name += ".exe"
+
+            lang_widget = self.table_profiles.cellWidget(row, 1)
+            mode_widget = self.table_profiles.cellWidget(row, 2)
+            style_widget = self.table_profiles.cellWidget(row, 3)
+
+            profiles[app_name] = {
+                "enabled": True,
+                "target_language": lang_widget.currentData() if lang_widget else "en",
+                "mode": mode_widget.currentData() if mode_widget else "translate",
+                "rewrite_style": style_widget.currentData() if style_widget else "natural",
+            }
+        return profiles
+
+    def _collect_glossary(self) -> list:
+        """Reads the glossary table back into config shape."""
+        entries = []
+        seen = set()
+        for row in range(self.table_glossary.rowCount()):
+            term_item = self.table_glossary.item(row, 0)
+            term = (term_item.text() if term_item else "").strip()
+            if not term or term.lower() in seen:
+                continue
+            seen.add(term.lower())
+
+            repl_item = self.table_glossary.item(row, 1)
+            wrapper = self.table_glossary.cellWidget(row, 2)
+            check = wrapper.findChild(QCheckBox) if wrapper else None
+
+            entries.append({
+                "term": term,
+                "replacement": (repl_item.text() if repl_item else "").strip(),
+                "match_case": bool(check.isChecked()) if check else False,
+                "enabled": True,
+            })
+        return entries
 
     def save_values(self) -> None:
         """Saves values from UI to configuration and Windows Credential Manager."""
@@ -405,11 +722,28 @@ class SettingsWindow(QDialog):
         elif prov == "openai":
             self.config.set("openai_model", model_val or "gpt-4o-mini")
 
+        # Two-way translation
+        self.config.set("auto_swap", {
+            "enabled": self.chk_auto_swap.isChecked(),
+            "primary": self.combo_auto_primary.currentData(),
+            "secondary": self.combo_auto_secondary.currentData(),
+        })
+
+        # Preview popup
+        self.config.set("preview_popup", {
+            "enabled": self.chk_preview.isChecked(),
+            "timeout_seconds": self.spin_preview_timeout.value(),
+        })
+
+        self.config.set("app_profiles", self._collect_profiles())
+        self.config.set("glossary", self._collect_glossary())
+
         # Hotkeys
         self.config.set_hotkey("translate", self.edit_hk_translate.text().strip(), self.chk_hk_translate.isChecked())
         self.config.set_hotkey("translate_en", self.edit_hk_en.text().strip(), self.chk_hk_en.isChecked())
         self.config.set_hotkey("translate_zh", self.edit_hk_zh.text().strip(), self.chk_hk_zh.isChecked())
         self.config.set_hotkey("translate_ja", self.edit_hk_ja.text().strip(), self.chk_hk_ja.isChecked())
+        self.config.set_hotkey("translate_ocr", self.edit_hk_ocr.text().strip(), self.chk_hk_ocr.isChecked())
 
         # API Keys (Stored in Windows Credential Manager)
         gemini_k = self.edit_key_gemini.text().strip()
