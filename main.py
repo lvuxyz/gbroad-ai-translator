@@ -5,6 +5,7 @@ system tray icon, global hotkey listener, and background worker threads.
 """
 
 import sys
+import time
 import threading
 from typing import Optional
 
@@ -25,6 +26,9 @@ from ui.resources import create_app_icon
 
 logger = setup_logger()
 SINGLE_INSTANCE_SERVER_NAME = "AITranslator_SingleInstance_Server"
+
+# Two hotkey events closer together than this are treated as key bounce.
+MIN_TRIGGER_INTERVAL_S = 0.25
 
 
 class TranslationBridge(QObject):
@@ -50,7 +54,9 @@ class ApplicationController(QObject):
         self.clipboard_mgr = get_clipboard_manager()
         self.translator = get_translator()
         self.bridge = TranslationBridge()
+        self._busy_lock = threading.Lock()
         self._is_busy = False
+        self._last_trigger_time = 0.0
 
         # Connect UI toast signals
         self.bridge.sig_translating.connect(self._on_toast_translating)
@@ -79,15 +85,37 @@ class ApplicationController(QObject):
         """Starts system tray icon and global hotkey listener."""
         self.tray.show()
         self.hotkey_mgr.start()
+        # Hand the hotkey registrations back to Windows on the way out
+        self.app.aboutToQuit.connect(self.hotkey_mgr.stop)
         logger.info("Application controller started successfully")
+
+        shortcut = self._primary_hotkey_label()
 
         if self.config.get("first_run", True):
             self.config.set("first_run", False)
             # On first run, open Settings window so user can explore options, and show friendly hint
             QTimer.singleShot(600, self.tray.open_settings)
-            self.bridge.sig_success.emit("Chào mừng! Bôi đen văn bản và nhấn Ctrl + Shift + T để dịch")
+            self.bridge.sig_success.emit(f"Chào mừng! Bôi đen văn bản và nhấn {shortcut} để dịch")
         elif self.config.get("show_notifications", True):
-            self.bridge.sig_info.emit("AI Translator đang chạy nền (Ctrl + Shift + T)")
+            self.bridge.sig_info.emit(f"AI Translator đang chạy nền ({shortcut})")
+
+        # A hotkey another application already owns fails silently otherwise
+        if self.hotkey_mgr.failed_hotkeys:
+            taken = ", ".join(
+                HotkeyManager.format_combo(c) for c in self.hotkey_mgr.failed_hotkeys
+            )
+            QTimer.singleShot(
+                3200,
+                lambda: self.bridge.sig_error.emit(
+                    f"Không đăng ký được phím tắt {taken} — ứng dụng khác đang giữ. "
+                    f"Đổi phím khác trong Cài đặt."
+                )
+            )
+
+    def _primary_hotkey_label(self) -> str:
+        """Returns the main translate shortcut as the user would read it."""
+        combo = self.config.get_hotkeys().get("translate", {}).get("key", "")
+        return HotkeyManager.format_combo(combo) if combo else "phím tắt đã cấu hình"
 
     def reload_hotkeys(self) -> None:
         """Restarts hotkey listener with updated configurations."""
@@ -114,12 +142,41 @@ class ApplicationController(QObject):
         if self.config.get("show_notifications", True):
             get_toast().show_info(msg)
 
+    # --- Concurrency Guard ---
+    def _acquire_busy(self) -> bool:
+        """Claims the single translation slot.
+
+        The claim has to be made here, on the Qt thread, rather than inside the
+        worker: a worker only sets the flag once it is already running, which
+        leaves a window where a second hotkey press starts a second pipeline.
+        Two pipelines mean two Ctrl+C injections, two Ctrl+V injections, and a
+        clipboard restored out of order.
+
+        Returns False when a translation is already running or the previous
+        trigger arrived moments ago.
+        """
+        now = time.monotonic()
+        with self._busy_lock:
+            if self._is_busy:
+                logger.warning("Translation already in progress, skipping duplicate trigger")
+                return False
+            if now - self._last_trigger_time < MIN_TRIGGER_INTERVAL_S:
+                logger.debug("Trigger ignored as key bounce")
+                return False
+            self._is_busy = True
+            self._last_trigger_time = now
+            return True
+
+    def _release_busy(self) -> None:
+        """Releases the translation slot."""
+        with self._busy_lock:
+            self._is_busy = False
+
     # --- Worker Dispatching ---
     @Slot(object)
     def _start_translation_worker(self, target_language: Optional[str]) -> None:
         """Runs the translation workflow in a background thread."""
-        if self._is_busy:
-            logger.warning("Translation already in progress, skipping duplicate hotkey event")
+        if not self._acquire_busy():
             return
 
         thread = threading.Thread(
@@ -132,7 +189,7 @@ class ApplicationController(QObject):
     @Slot()
     def _start_clipboard_worker(self) -> None:
         """Runs clipboard-only translation in a background thread."""
-        if self._is_busy:
+        if not self._acquire_busy():
             return
 
         thread = threading.Thread(
@@ -143,7 +200,6 @@ class ApplicationController(QObject):
 
     def _run_translation_pipeline(self, target_language: Optional[str]) -> None:
         """Background pipeline: Capture selected text -> Translate -> Paste -> Restore clipboard."""
-        self._is_busy = True
         try:
             target_lang = target_language or self.config.get("target_language", "en")
             target_lang_name = SUPPORTED_LANGUAGES.get(target_lang, target_lang)
@@ -197,11 +253,10 @@ class ApplicationController(QObject):
                     self.bridge.sig_error.emit(f"Dịch thất bại: {e}")
 
         finally:
-            self._is_busy = False
+            self._release_busy()
 
     def _run_clipboard_translation_pipeline(self) -> None:
         """Background pipeline: Translate clipboard directly and save to clipboard."""
-        self._is_busy = True
         try:
             target_lang = self.config.get("target_language", "en")
             target_lang_name = SUPPORTED_LANGUAGES.get(target_lang, target_lang)
@@ -225,7 +280,7 @@ class ApplicationController(QObject):
                 logger.error("Explicit clipboard translation failed: %s", e)
                 self.bridge.sig_error.emit(f"Dịch thất bại: {e}")
         finally:
-            self._is_busy = False
+            self._release_busy()
 
 
 def check_single_instance() -> Optional[QLocalServer]:
@@ -272,7 +327,9 @@ def main() -> int:
         client = server.nextPendingConnection()
         if client:
             controller.tray.open_settings()
-            controller.bridge.sig_info.emit("AI Translator đang chạy nền (Ctrl + Shift + T)")
+            controller.bridge.sig_info.emit(
+                f"AI Translator đang chạy nền ({controller._primary_hotkey_label()})"
+            )
 
     server.newConnection.connect(on_new_instance)
 

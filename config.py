@@ -54,7 +54,21 @@ REWRITE_STYLES = [
     "polish",
 ]
 
+# Bumped whenever saved settings need rewriting on load (see ConfigManager._migrate)
+CONFIG_VERSION = 2
+
+# Hotkeys shipped before v2. They collided with Chrome's "reopen closed tab",
+# DevTools, and VS Code panels, so installs still carrying them are migrated.
+LEGACY_DEFAULT_HOTKEYS: Dict[str, str] = {
+    "translate": "<ctrl>+<shift>+t",
+    "translate_en": "<ctrl>+<shift>+e",
+    "translate_zh": "<ctrl>+<shift>+c",
+    "translate_ja": "<ctrl>+<shift>+j",
+}
+
 DEFAULT_CONFIG: Dict[str, Any] = {
+    "config_version": CONFIG_VERSION,
+
     # General
     "first_run": True,
     "start_with_windows": False,
@@ -78,24 +92,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # Hotkeys
     "hotkeys": {
         "translate": {
-            "key": "<ctrl>+<shift>+t",
+            "key": "<ctrl>+<alt>+t",
             "enabled": True,
             "description": "Dịch văn bản bôi đen"
         },
         "translate_en": {
-            "key": "<ctrl>+<shift>+e",
+            "key": "<ctrl>+<alt>+e",
             "enabled": True,
             "description": "Dịch nhanh sang Tiếng Anh",
             "target": "en"
         },
         "translate_zh": {
-            "key": "<ctrl>+<shift>+c",
+            "key": "<ctrl>+<alt>+c",
             "enabled": True,
             "description": "Dịch nhanh sang Tiếng Trung",
             "target": "zh-CN"
         },
         "translate_ja": {
-            "key": "<ctrl>+<shift>+j",
+            "key": "<ctrl>+<alt>+j",
             "enabled": True,
             "description": "Dịch nhanh sang Tiếng Nhật",
             "target": "ja"
@@ -127,15 +141,46 @@ class ConfigManager:
         self._data = json.loads(json.dumps(DEFAULT_CONFIG))  # deep copy defaults
 
         if self.config_file.exists():
+            # Read from the file rather than the merged result: defaults already
+            # carry the current version, which would mask every older file.
+            saved_version = 1
             try:
                 with open(self.config_file, "r", encoding="utf-8") as f:
                     saved_data = json.load(f)
+                    saved_version = saved_data.get("config_version", 1)
                     self._deep_update(self._data, saved_data)
                 logger.info("Configuration loaded from %s", self.config_file)
             except Exception as e:
                 logger.error("Failed to load config file, using defaults: %s", e)
+                saved_version = CONFIG_VERSION  # Defaults are already current
+            self._migrate(saved_version)
         else:
             self.save()
+
+    def _migrate(self, saved_version: int) -> None:
+        """Rewrites settings saved by an older version of the application."""
+        if saved_version >= CONFIG_VERSION:
+            return
+
+        changed = False
+
+        # v1 -> v2: retire the Ctrl+Shift hotkeys. They were never suppressed, so
+        # the foreground application acted on them too. Only untouched defaults
+        # are rewritten; a combination the user chose themselves is left alone.
+        if saved_version < 2:
+            for name, legacy_key in LEGACY_DEFAULT_HOTKEYS.items():
+                entry = self._data.get("hotkeys", {}).get(name)
+                if entry and entry.get("key") == legacy_key:
+                    entry["key"] = DEFAULT_CONFIG["hotkeys"][name]["key"]
+                    changed = True
+                    logger.info(
+                        "Migrated hotkey '%s' from %s to %s", name, legacy_key, entry["key"]
+                    )
+
+        self._data["config_version"] = CONFIG_VERSION
+        self.save()
+        if changed:
+            logger.info("Configuration migrated to version %d", CONFIG_VERSION)
 
     def save(self) -> None:
         """Saves current configuration to JSON file."""

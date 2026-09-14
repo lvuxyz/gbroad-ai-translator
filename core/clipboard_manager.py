@@ -27,25 +27,63 @@ VK_C = 0x43
 VK_V = 0x56
 
 
+# ULONG_PTR follows the pointer width of the running interpreter
+ULONG_PTR = ctypes.c_ulonglong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_ulong
+
+
+class MOUSEINPUT(ctypes.Structure):
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
 class KEYBDINPUT(ctypes.Structure):
     _fields_ = [
         ("wVk", wintypes.WORD),
         ("wScan", wintypes.WORD),
         ("dwFlags", wintypes.DWORD),
         ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.c_ulonglong)
+        ("dwExtraInfo", ULONG_PTR),
+    ]
+
+
+class HARDWAREINPUT(ctypes.Structure):
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
     ]
 
 
 class INPUT(ctypes.Structure):
+    """Win32 INPUT.
+
+    Every member of the union has to be declared even though only keyboard
+    events are sent. MOUSEINPUT is the largest at 32 bytes, so omitting it
+    shrinks sizeof(INPUT) from 40 to 32 on x64 — and SendInput rejects any
+    cbSize that does not match its own idea of the struct, failing with
+    ERROR_INVALID_PARAMETER and no other symptom.
+    """
+
     class _INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
+        _fields_ = [
+            ("mi", MOUSEINPUT),
+            ("ki", KEYBDINPUT),
+            ("hi", HARDWAREINPUT),
+        ]
 
     _anonymous_ = ("u",)
     _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
 
 
-user32 = ctypes.windll.user32
+user32 = ctypes.WinDLL("user32", use_last_error=True)
+user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+user32.SendInput.restype = wintypes.UINT
 
 
 class ClipboardManager:
@@ -55,8 +93,13 @@ class ClipboardManager:
         self._busy = False
 
     @staticmethod
-    def _send_key_event(vk_code: int, key_up: bool = False) -> None:
-        """Sends a single keyboard event using Win32 SendInput."""
+    def _send_key_event(vk_code: int, key_up: bool = False) -> bool:
+        """Sends a single keyboard event using Win32 SendInput.
+
+        Returns True when the event reached the input queue. A rejected event
+        used to pass unnoticed, leaving copy and paste simulation silently
+        doing nothing, so the outcome is checked and logged.
+        """
         flags = KEYEVENTF_KEYUP if key_up else 0
         inp = INPUT()
         inp.type = INPUT_KEYBOARD
@@ -67,7 +110,14 @@ class ClipboardManager:
             time=0,
             dwExtraInfo=0
         )
-        user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        sent = user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+        if sent != 1:
+            logger.error(
+                "SendInput rejected key event (vk=0x%02X, up=%s): Win32 error %d",
+                vk_code, key_up, ctypes.get_last_error()
+            )
+            return False
+        return True
 
     @staticmethod
     def release_modifier_keys() -> None:

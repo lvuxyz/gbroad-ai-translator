@@ -2,6 +2,7 @@
 
 from typing import Optional
 import httpx
+from providers.http import get_client
 from providers.base import (
     TranslationProvider,
     TranslationError,
@@ -78,34 +79,34 @@ class OpenAIProvider(TranslationProvider):
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(url, headers=headers, json=payload)
+            client = get_client()
+            response = client.post(url, headers=headers, json=payload, timeout=self.timeout)
 
-                if response.status_code == 401:
-                    raise AuthenticationError("Invalid OpenAI API Key. Please check your key in Settings.")
-                elif response.status_code == 429:
-                    raise RateLimitError("OpenAI rate limit or quota exceeded. Please check your billing.")
-                elif response.status_code == 400:
-                    data = response.json()
-                    err = data.get("error", {}).get("message", "Bad request")
-                    raise TranslationError(f"OpenAI Error: {err}")
-
-                response.raise_for_status()
+            if response.status_code == 401:
+                raise AuthenticationError("Invalid OpenAI API Key. Please check your key in Settings.")
+            elif response.status_code == 429:
+                raise RateLimitError("OpenAI rate limit or quota exceeded. Please check your billing.")
+            elif response.status_code == 400:
                 data = response.json()
+                err = data.get("error", {}).get("message", "Bad request")
+                raise TranslationError(f"OpenAI Error: {err}")
 
-                choices = data.get("choices", [])
-                if not choices:
-                    raise TranslationError("OpenAI returned no choices.")
+            response.raise_for_status()
+            data = response.json()
 
-                result_text = choices[0].get("message", {}).get("content", "").strip()
+            choices = data.get("choices", [])
+            if not choices:
+                raise TranslationError("OpenAI returned no choices.")
 
-                # Clean accidental outer triple backtick wrapping
-                if not text.strip().startswith("```") and result_text.startswith("```") and result_text.endswith("```"):
-                    lines = result_text.splitlines()
-                    if len(lines) >= 2:
-                        result_text = "\n".join(lines[1:-1]).strip()
+            result_text = choices[0].get("message", {}).get("content", "").strip()
 
-                return result_text
+            # Clean accidental outer triple backtick wrapping
+            if not text.strip().startswith("```") and result_text.startswith("```") and result_text.endswith("```"):
+                lines = result_text.splitlines()
+                if len(lines) >= 2:
+                    result_text = "\n".join(lines[1:-1]).strip()
+
+            return result_text
 
         except httpx.ConnectError as e:
             raise NetworkError("Translation unavailable. Please check your internet connection.") from e

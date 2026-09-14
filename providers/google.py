@@ -11,6 +11,7 @@ import html
 import re
 from typing import Optional
 import httpx
+from providers.http import get_client
 from providers.base import (
     TranslationProvider,
     TranslationError,
@@ -81,25 +82,25 @@ class GoogleTranslateProvider(TranslationProvider):
             params["source"] = src
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(url, params=params)
-                if response.status_code == 400:
-                    data = response.json()
-                    err_msg = data.get("error", {}).get("message", "Invalid request")
-                    if "API key" in err_msg or "PERMISSION_DENIED" in err_msg:
-                        raise AuthenticationError(f"Invalid Google API Key: {err_msg}")
-                    raise TranslationError(err_msg)
-                elif response.status_code == 403:
-                    raise AuthenticationError("Google Translation API Key forbidden or quota exceeded")
-                elif response.status_code == 429:
-                    raise RateLimitError("Google Translation API rate limit reached")
-
-                response.raise_for_status()
+            client = get_client()
+            response = client.post(url, params=params, timeout=self.timeout)
+            if response.status_code == 400:
                 data = response.json()
-                translations = data.get("data", {}).get("translations", [])
-                if translations:
-                    return translations[0].get("translatedText", text)
-                return text
+                err_msg = data.get("error", {}).get("message", "Invalid request")
+                if "API key" in err_msg or "PERMISSION_DENIED" in err_msg:
+                    raise AuthenticationError(f"Invalid Google API Key: {err_msg}")
+                raise TranslationError(err_msg)
+            elif response.status_code == 403:
+                raise AuthenticationError("Google Translation API Key forbidden or quota exceeded")
+            elif response.status_code == 429:
+                raise RateLimitError("Google Translation API rate limit reached")
+
+            response.raise_for_status()
+            data = response.json()
+            translations = data.get("data", {}).get("translations", [])
+            if translations:
+                return translations[0].get("translatedText", text)
+            return text
         except httpx.ConnectError as e:
             raise NetworkError("Translation unavailable. Please check your internet connection.") from e
         except httpx.TimeoutException as e:
@@ -123,22 +124,22 @@ class GoogleTranslateProvider(TranslationProvider):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
 
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.get(url, params=params, headers=headers)
-            if response.status_code == 429:
-                raise RateLimitError("Google Translate single endpoint 429")
-            response.raise_for_status()
+        client = get_client()
+        response = client.get(url, params=params, headers=headers, timeout=self.timeout)
+        if response.status_code == 429:
+            raise RateLimitError("Google Translate single endpoint 429")
+        response.raise_for_status()
 
-            data = response.json()
-            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
-                translated_segments = []
-                for segment in data[0]:
-                    if isinstance(segment, list) and len(segment) > 0 and segment[0]:
-                        translated_segments.append(segment[0])
-                if translated_segments:
-                    return "".join(translated_segments)
+        data = response.json()
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+            translated_segments = []
+            for segment in data[0]:
+                if isinstance(segment, list) and len(segment) > 0 and segment[0]:
+                    translated_segments.append(segment[0])
+            if translated_segments:
+                return "".join(translated_segments)
 
-            raise TranslationError("Unexpected response format from Google single endpoint")
+        raise TranslationError("Unexpected response format from Google single endpoint")
 
     def _translate_mobile_endpoint(self, text: str, src: str, tgt: str) -> str:
         """Google translate mobile web endpoint."""
@@ -153,13 +154,13 @@ class GoogleTranslateProvider(TranslationProvider):
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.get(url, params=params, headers=headers)
-                response.raise_for_status()
-                match = re.search(r'class="result-container">([^<]+)<', response.text)
-                if match:
-                    return html.unescape(match.group(1)).strip()
-                raise TranslationError("Could not extract translation from Google mobile page")
+            client = get_client()
+            response = client.get(url, params=params, headers=headers, timeout=self.timeout)
+            response.raise_for_status()
+            match = re.search(r'class="result-container">([^<]+)<', response.text)
+            if match:
+                return html.unescape(match.group(1)).strip()
+            raise TranslationError("Could not extract translation from Google mobile page")
         except httpx.ConnectError as e:
             raise NetworkError("Translation unavailable. Please check your internet connection.") from e
         except httpx.TimeoutException as e:
@@ -175,14 +176,14 @@ class GoogleTranslateProvider(TranslationProvider):
         }
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.get(url, params=params)
-                response.raise_for_status()
-                data = response.json()
-                translated = data.get("responseData", {}).get("translatedText")
-                if translated:
-                    return html.unescape(translated).strip()
-                raise TranslationError("MyMemory returned empty translation")
+            client = get_client()
+            response = client.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            translated = data.get("responseData", {}).get("translatedText")
+            if translated:
+                return html.unescape(translated).strip()
+            raise TranslationError("MyMemory returned empty translation")
         except httpx.ConnectError as e:
             raise NetworkError("Translation unavailable. Please check your internet connection.") from e
         except httpx.TimeoutException as e:

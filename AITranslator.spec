@@ -15,8 +15,6 @@ hidden_imports = [
     'PySide6.QtWidgets',
     'PySide6.QtNetwork',
     'keyring.backends.Windows',
-    'pynput.keyboard._win32',
-    'pynput.mouse._win32',
     'win32clipboard',
     'win32con',
     'win32gui',

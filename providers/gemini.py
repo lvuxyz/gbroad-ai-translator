@@ -2,6 +2,7 @@
 
 from typing import Optional
 import httpx
+from providers.http import get_client
 from providers.base import (
     TranslationProvider,
     TranslationError,
@@ -75,7 +76,13 @@ class GeminiProvider(TranslationProvider):
                 f"Text:\n{text}"
             )
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent?key={self.api_key}"
+        # The key travels in a header rather than the query string, which would
+        # otherwise land in proxy and server access logs.
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        headers = {
+            "x-goog-api-key": self.api_key,
+            "Content-Type": "application/json",
+        }
         payload = {
             "contents": [
                 {
@@ -90,45 +97,57 @@ class GeminiProvider(TranslationProvider):
             }
         }
 
+        # Translation needs no deliberation, and thinking is on by default on
+        # 2.5 models. Gemini 2.5 Pro cannot go below its minimum budget, so it
+        # is left alone.
+        if "2.5" in self.model and "pro" not in self.model.lower():
+            payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": 0}
+
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(url, json=payload)
+            client = get_client()
+            response = client.post(url, headers=headers, json=payload, timeout=self.timeout)
 
-                if response.status_code == 400:
-                    data = response.json()
-                    err = data.get("error", {})
-                    msg = err.get("message", "Bad request")
-                    if "API_KEY_INVALID" in msg or "API key not valid" in msg:
-                        raise AuthenticationError("Invalid Gemini API Key. Please verify your key in Settings.")
-                    raise TranslationError(f"Gemini API Error: {msg}")
+            # A model that rejects thinkingConfig still deserves a translation
+            if response.status_code == 400 and "thinkingConfig" in payload["generationConfig"]:
+                logger.info("Model %s rejected thinkingConfig; retrying without it", self.model)
+                payload["generationConfig"].pop("thinkingConfig", None)
+                response = client.post(url, headers=headers, json=payload, timeout=self.timeout)
 
-                elif response.status_code in (401, 403):
-                    raise AuthenticationError("Gemini API Key authorization failed or permission denied.")
-
-                elif response.status_code == 429:
-                    raise RateLimitError("Gemini rate limit exceeded. Please try again in a moment.")
-
-                response.raise_for_status()
+            if response.status_code == 400:
                 data = response.json()
+                err = data.get("error", {})
+                msg = err.get("message", "Bad request")
+                if "API_KEY_INVALID" in msg or "API key not valid" in msg:
+                    raise AuthenticationError("Invalid Gemini API Key. Please verify your key in Settings.")
+                raise TranslationError(f"Gemini API Error: {msg}")
 
-                # Extract text
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    raise TranslationError("Gemini returned no translation candidates.")
+            elif response.status_code in (401, 403):
+                raise AuthenticationError("Gemini API Key authorization failed or permission denied.")
 
-                parts = candidates[0].get("content", {}).get("parts", [])
-                if not parts:
-                    raise TranslationError("Gemini returned empty response parts.")
+            elif response.status_code == 429:
+                raise RateLimitError("Gemini rate limit exceeded. Please try again in a moment.")
 
-                result_text = parts[0].get("text", "").strip()
+            response.raise_for_status()
+            data = response.json()
 
-                # If original text did not start with ``` but Gemini wrapped the whole output in ```, strip it
-                if not text.strip().startswith("```") and result_text.startswith("```") and result_text.endswith("```"):
-                    lines = result_text.splitlines()
-                    if len(lines) >= 2:
-                        result_text = "\n".join(lines[1:-1]).strip()
+            # Extract text
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise TranslationError("Gemini returned no translation candidates.")
 
-                return result_text
+            parts = candidates[0].get("content", {}).get("parts", [])
+            if not parts:
+                raise TranslationError("Gemini returned empty response parts.")
+
+            result_text = parts[0].get("text", "").strip()
+
+            # If original text did not start with ``` but Gemini wrapped the whole output in ```, strip it
+            if not text.strip().startswith("```") and result_text.startswith("```") and result_text.endswith("```"):
+                lines = result_text.splitlines()
+                if len(lines) >= 2:
+                    result_text = "\n".join(lines[1:-1]).strip()
+
+            return result_text
 
         except httpx.ConnectError as e:
             raise NetworkError("Translation unavailable. Please check your internet connection.") from e

@@ -5,7 +5,9 @@ timeout enforcement, text post-processing, and history recording.
 """
 
 import time
-from typing import Optional, Dict, Any
+import threading
+from collections import OrderedDict
+from typing import Optional, Dict, Any, Tuple
 from providers.base import (
     TranslationProvider,
     TranslationError,
@@ -24,6 +26,54 @@ from utils.logger import get_logger
 logger = get_logger()
 
 
+class TranslationCache:
+    """Bounded, in-memory cache of recent translation results.
+
+    Repeating a translation is ordinary use: retrying after a mistyped
+    selection, or sending the same greeting to a second person. Each repeat
+    otherwise costs a full network round trip.
+
+    Entries live in memory only and never reach disk, and the cache is bypassed
+    entirely while Privacy Mode is on.
+    """
+
+    def __init__(self, max_entries: int = 128, ttl_seconds: float = 600.0):
+        self._entries: "OrderedDict[Tuple, Tuple[float, str]]" = OrderedDict()
+        self._max_entries = max_entries
+        self._ttl = ttl_seconds
+        self._lock = threading.Lock()
+
+    def get(self, key: Tuple) -> Optional[str]:
+        """Returns the cached result, or None if absent or expired."""
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is None:
+                return None
+            stored_at, value = entry
+            if time.monotonic() - stored_at > self._ttl:
+                del self._entries[key]
+                return None
+            self._entries.move_to_end(key)
+            return value
+
+    def put(self, key: Tuple, value: str) -> None:
+        """Stores a result, evicting the least recently used entry when full."""
+        with self._lock:
+            self._entries[key] = (time.monotonic(), value)
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._max_entries:
+                self._entries.popitem(last=False)
+
+    def clear(self) -> None:
+        """Drops every cached result."""
+        with self._lock:
+            self._entries.clear()
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._entries)
+
+
 class TranslatorService:
     """Orchestrates translation operations, retries, and history logging."""
 
@@ -31,6 +81,7 @@ class TranslatorService:
         self.config = get_config()
         self.db = get_database()
         self.text_processor = TextProcessor()
+        self.cache = TranslationCache()
 
     def get_provider(self, provider_name: Optional[str] = None) -> TranslationProvider:
         """Instantiates the requested or currently configured translation provider."""
@@ -94,6 +145,16 @@ class TranslatorService:
         rewrite_style = style or self.config.get("rewrite_style", "natural")
         active_provider_name = (provider_name or self.config.get("provider", "gemini")).lower()
 
+        # Privacy Mode keeps nothing about the text around, cache included
+        privacy_mode = self.config.get("privacy_mode", False)
+        cache_key = (body, src_lang, tgt_lang, active_provider_name, trans_mode, rewrite_style)
+
+        if not privacy_mode:
+            cached = self.cache.get(cache_key)
+            if cached is not None:
+                logger.info("Serving translation from cache (text_length=%d)", len(body))
+                return self.text_processor.apply_spacing(cached, leading, trailing)
+
         provider = self.get_provider(active_provider_name)
 
         max_retries = 2
@@ -117,8 +178,10 @@ class TranslatorService:
                 cleaned_result = self.text_processor.clean_output(body, raw_result)
                 final_result = self.text_processor.apply_spacing(cleaned_result, leading, trailing)
 
+                if not privacy_mode:
+                    self.cache.put(cache_key, cleaned_result)
+
                 # Record in database if privacy mode is not enabled
-                privacy_mode = self.config.get("privacy_mode", False)
                 history_enabled = self.config.get("history_enabled", True)
 
                 self.db.add_translation(
