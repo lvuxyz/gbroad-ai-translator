@@ -1,0 +1,49 @@
+==============================================================================
+   HƯỚNG DẪN NHANH - WINDOWS AI TRANSLATION TOOL (GBOARD CHO WINDOWS)
+==============================================================================
+
+1. CÁCH CÀI ĐẶT
+------------------------------------------------------------------------------
+- Cách 1 (Khuyên dùng): Nhấp đúp vào file "Cai_Dat.bat".
+  Chương trình sẽ tự động cài vào máy, tạo biểu tượng ngoài Desktop, Start Menu
+  và tự động khởi động cùng Windows.
+  
+- Cách 2 (Bản Portable): Nhấp đúp trực tiếp vào "AITranslator.exe" để chạy
+  ngay mà không cần cài đặt.
+
+
+2. CÁCH SỬ DỤNG
+------------------------------------------------------------------------------
+- Mở bất kỳ ứng dụng nào bạn thường dùng: Chrome, Edge, Discord, Zalo,
+  Telegram, Messenger, Word, Notepad, VS Code...
+- Nhập văn bản (Ví dụ: "Tôi đang học lập trình").
+- Dùng chuột bôi đen đoạn văn bản đó.
+- Nhấn tổ hợp phím tắt:
+
+      Ctrl + Shift + T   --> Dịch sang ngôn ngữ mặc định (Tiếng Anh)
+      Ctrl + Shift + E   --> Dịch nhanh sang Tiếng Anh
+      Ctrl + Shift + C   --> Dịch nhanh sang Tiếng Trung
+      Ctrl + Shift + J   --> Dịch nhanh sang Tiếng Nhật
+
+- Ứng dụng sẽ tự động dịch và thay thế văn bản cũ bằng kết quả dịch!
+- Clipboard ban đầu của bạn sẽ được tự động giữ nguyên vẹn.
+
+
+3. CÀI ĐẶT & THAY ĐỔI
+------------------------------------------------------------------------------
+- Ứng dụng chạy nền ở góc dưới bên phải màn hình (Khay hệ thống - System Tray).
+- Nhấp đúp vào biểu tượng chữ "T" màu xanh hoặc chuột phải chọn "Settings"
+  để:
+  + Đổi ngôn ngữ đích (Tiếng Anh, Nhật, Hàn, Trung, Pháp, Đức, Tây Ban Nha, Thái...)
+  + Đổi phím tắt theo ý thích.
+  + Đổi AI Provider: Google Translate (miễn phí, không cần key),
+    hoặc Google Gemini / OpenAI GPT-4o-mini (dịch cực kỳ thông minh).
+  + Bật/tắt chế độ viết lại văn phong (AI Rewrite: Natural, Formal, Casual, Polish).
+  + Bật/tắt chế độ bảo mật (Privacy Mode).
+
+
+4. CÁCH GỠ CÀI ĐẶT
+------------------------------------------------------------------------------
+- Nếu không muốn sử dụng nữa, chỉ cần nhấp đúp vào file "Go_Cai_Dat.bat".
+  Toàn bộ phím tắt và file chương trình sẽ được dọn dẹp sạch sẽ khỏi máy tính.
+==============================================================================

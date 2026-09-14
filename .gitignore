@@ -1,0 +1,32 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets — never commit real API keys
+.env
+.env.*
+!.env.example
+
+# PyInstaller / Inno Setup build output
+build/
+dist/
+release/
+Output/
+*.manifest
+
+# Logs and local runtime data
+logs/
+*.log
+*.db
+
+# IDE / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
