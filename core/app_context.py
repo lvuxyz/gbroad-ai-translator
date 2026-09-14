@@ -8,7 +8,7 @@ after Ctrl+C would risk reading our own window instead.
 import ctypes
 import os
 from ctypes import wintypes
-from typing import Optional, NamedTuple, Dict, Any
+from typing import Optional, NamedTuple, Dict, Any, Tuple
 
 from utils.logger import get_logger
 
